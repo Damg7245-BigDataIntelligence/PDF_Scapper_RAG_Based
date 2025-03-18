@@ -3,6 +3,7 @@ pydantic
 requests
 google-api-python-client
 tiktoken
+mistralai>=0.0.11
 
 fastapi
 uvicorn

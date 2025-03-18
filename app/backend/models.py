@@ -43,10 +43,28 @@ class QuestionResponse(BaseModel):
     answer: str
     cost: Dict[str, Any]
 
+class QuestionRAGRequest(BaseModel):
+    question: str
+    model_id: str = "huggingface/HuggingFaceH4/zephyr-7b-beta"
+
 class ModelInfo(BaseModel):
     id: str
     name: str
     provider: str
 
 class ModelsResponse(BaseModel):
-    models: List[ModelInfo] 
+    models: List[ModelInfo]
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+class SearchResult(BaseModel):
+    document_id: str
+    chunk_id: str
+    text: str
+    similarity: float
+    document_metadata: Dict[str, Any]
+
+class SearchResponse(BaseModel):
+    results: List[SearchResult] 

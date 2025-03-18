@@ -5,7 +5,8 @@ from typing import Dict, Tuple, Any
 from datetime import datetime
 import tempfile
 from tempfile import NamedTemporaryFile
-from .s3_utils import upload_pdf_to_s3, upload_markdown_to_s3, upload_file_to_s3
+from .s3_utils import upload_pdf_to_s3, upload_markdown_to_s3, upload_file_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
+from .embedding_service import EmbeddingService
 
 # Docling imports
 from docling.document_converter import DocumentConverter
@@ -14,18 +15,44 @@ from docling_core.types.doc import ImageRefMode, PictureItem
 from docling.document_converter import PdfFormatOption
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
+# Add import for the Mistral extractor
+from .mistral_ocr_extractor import MistralOCRExtractor
+
 class PDFProcessor:
-    def __init__(self):
+    def __init__(self, use_mistral: bool = False):
         """
-        Initialize the PDF processor with Docling configuration
+        Initialize the PDF processor with configurable extractors
+        
+        Args:
+            use_mistral: If True, use Mistral OCR extractor instead of Docling
         """
-        # Initialize Docling document converter with appropriate options
+        self.use_mistral = use_mistral
+        
+        # Initialize the selected extractor
+        if use_mistral:
+            try:
+                self.mistral_extractor = MistralOCRExtractor()
+                print("Using Mistral OCR for PDF processing")
+            except ValueError as e:
+                print(f"Error initializing Mistral OCR extractor: {e}")
+                print("Falling back to Docling")
+                self.use_mistral = False
+                self._initialize_docling()
+        else:
+            # Initialize Docling
+            self._initialize_docling()
+        
+        # Initialize embedding service
+        self.embedding_service = EmbeddingService()
+    
+    def _initialize_docling(self):
+        """Initialize Docling document converter"""
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = True
         pipeline_options.do_table_structure = True
         pipeline_options.images_scale = 2.0
-        pipeline_options.generate_page_images = False  # Set to True if you want page images
-        pipeline_options.generate_picture_images = False  # Set to True if you want picture images
+        pipeline_options.generate_page_images = False
+        pipeline_options.generate_picture_images = False
         
         self.doc_converter = DocumentConverter(
             allowed_formats=[InputFormat.PDF],
@@ -39,7 +66,7 @@ class PDFProcessor:
     
     def process_pdf(self, file_content: bytes, original_filename: str) -> Tuple[str, str, Dict[str, Any]]:
         """
-        Process a PDF file using Docling and extract its text content, storing in S3
+        Process a PDF file and extract its text content, storing in S3
         
         Args:
             file_content: The binary content of the PDF file
@@ -48,6 +75,65 @@ class PDFProcessor:
         Returns:
             Tuple containing the raw text content, markdown formatted content, and metadata
         """
+        # Get base name for file naming
+        base_name = Path(original_filename).stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        document_id = f"{base_name}_{timestamp}"
+        
+        # Process using selected extractor
+        if self.use_mistral:
+            # Process with Mistral OCR
+            print(f"Processing {original_filename} with Mistral OCR...")
+            raw_text, markdown_content = self.mistral_extractor.extract_text(
+                file_content, original_filename, document_id
+            )
+        else:
+            # Process with Docling (existing implementation)
+            print(f"Processing {original_filename} with Docling...")
+            raw_text, markdown_content = self._process_with_docling(
+                file_content, original_filename, document_id, base_name
+            )
+        
+        # Upload PDF to S3 - Mistral extractor already does this for its own use
+        if not self.use_mistral:
+            pdf_url = upload_pdf_to_s3(file_content, original_filename, document_id)
+        else:
+            # Use the same format to maintain consistency
+            pdf_url = f"https://{AWS_S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/documents/pdf/{document_id}/{original_filename}"
+        
+        # Upload markdown to S3
+        markdown_url = upload_markdown_to_s3(markdown_content, document_id, base_name)
+        
+        # Create metadata
+        metadata = {
+            'document_id': document_id,
+            'source_type': 'pdf',
+            'original_filename': original_filename,
+            'processing_date': timestamp,
+            'content_type': 'document',
+            'pdf_url': pdf_url,
+            'markdown_url': markdown_url,
+            'processor': 'mistral_ocr' if self.use_mistral else 'docling'
+        }
+        
+        print(f"Document processed. Adding to embedding service...")
+        
+        # Print information about the document before chunking
+        print(f"Document content length: {len(markdown_content)} characters")
+        print(f"Processing document: {document_id}")
+        
+        # Add document to embedding service (this will handle chunking and embedding)
+        self.embedding_service.add_document(
+            document_id=document_id,
+            content=markdown_content,
+            metadata=metadata
+        )
+        
+        return raw_text, markdown_content, metadata
+    
+    def _process_with_docling(self, file_content: bytes, original_filename: str, 
+                              document_id: str, base_name: str) -> Tuple[str, str]:
+        """Process PDF with Docling"""
         pdf_buffer = None
         temp_file = None
         
@@ -55,11 +141,6 @@ class PDFProcessor:
             print("Processing with Docling...")
             # Create a buffer from the file content
             pdf_buffer = io.BytesIO(file_content)
-            
-            # Get base name for file naming
-            base_name = Path(original_filename).stem
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            document_id = f"{base_name}_{timestamp}"
             
             # Create a temporary file for the PDF
             with NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
@@ -87,25 +168,7 @@ class PDFProcessor:
                     # Simple cleanup to get plain text from markdown
                     raw_text = markdown_content.replace('#', '').replace('*', '')
                 
-                # Upload PDF to S3
-                pdf_url = upload_pdf_to_s3(file_content, original_filename, document_id)
-                
-                # Upload markdown to S3
-                markdown_url = upload_markdown_to_s3(markdown_content, document_id, base_name)
-                
-                metadata = {
-                    'document_id': document_id,
-                    'source_type': 'pdf',
-                    'original_filename': original_filename,
-                    'processing_date': timestamp,
-                    'content_type': 'document',
-                    'pdf_url': pdf_url,
-                    'markdown_url': markdown_url,
-                    'processor': 'docling'
-                }
-                
-                print("Docling processing successful")
-                return raw_text, markdown_content, metadata
+                return raw_text, markdown_content
                 
         except Exception as e:
             print(f"Docling processing failed: {str(e)}")

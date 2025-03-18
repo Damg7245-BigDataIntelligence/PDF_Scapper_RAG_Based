@@ -4,7 +4,7 @@ import litellm
 import requests
 import time
 import tiktoken
-
+from .embedding_service import EmbeddingService
 class LLMService:
     def __init__(self, api_key: Optional[str] = None):
         # HuggingFace API token (can be empty for some public models)
@@ -38,6 +38,7 @@ class LLMService:
         
         # Initialize tiktoken encoder for token counting
         self.encoder = tiktoken.get_encoding("cl100k_base")
+        self.embedding_service = EmbeddingService()
     
     def get_available_models(self) -> list:
         """Return list of available models"""
@@ -169,99 +170,51 @@ class LLMService:
                     "total_cost": 0
                 }
     
-    def answer_question(self, document_content: str, question: str, model_id: str = "huggingface/HuggingFaceH4/zephyr-7b-beta") -> Tuple[str, Dict[str, Any]]:
+    def answer_question_with_rag(
+        self, 
+        question: str, 
+        model_id: str = "huggingface/HuggingFaceH4/zephyr-7b-beta"
+    ) -> Tuple[str, Dict[str, Any]]:
         """
-        Answer a question about the document provided by the user using the specified model.
+        Answer a question using RAG (Retrieval-Augmented Generation)
         
         Args:
-            document_content: The text content of the document.
-            question: The question to answer.
-            model_id: The ID of the model to use.
+            question: The question to answer
+            model_id: The ID of the LLM to use
             
         Returns:
-            Tuple containing the answer and cost information.
+            Tuple containing the answer and cost information
         """
-        system_prompt = "You are a helpful assistant that answers questions only restricted to the document content provided. Provide accurate and concise answers based on the document content only."
+        # Retrieve relevant chunks using embedding search
+        search_results = self.embedding_service.search(question, top_k=3)
+        print(f"Search results: {search_results}")
+        # Extract the text from the search results to use as context
+        context_text = "\n\n".join([
+            f"Document: {result['document_metadata']['original_filename']}\n"
+            f"{result['text']}"
+            for result in search_results
+        ])
         
-        # Check if document is too long and we're using Zephyr
-        if self._count_tokens(document_content) > 6000 and model_id.startswith("huggingface"):
-            # Chunk the document
-            chunks = self._chunk_document(document_content)
-            chunk_answers = []
-            total_prompt_tokens = 0
-            total_completion_tokens = 0
-            
-            print(f"Document chunked into {len(chunks)} parts for QA processing")
-            
-            # Process each chunk to find potential answers
-            for i, chunk in enumerate(chunks):
-                chunk_prompt = f"Document part {i+1} of {len(chunks)}:\n\n{chunk}\n\nQuestion: {question}\n\nIf you can answer the question based on this document part, provide the answer. If not, respond with 'No relevant information in this part.'"
-                
-                chunk_answer = self._call_huggingface_api(system_prompt, chunk_prompt)
-                
-                # Only keep relevant answers
-                if "No relevant information in this part" not in chunk_answer:
-                    chunk_answers.append(chunk_answer)
-                
-                # Count tokens
-                prompt_tokens = self._count_tokens(system_prompt + chunk_prompt)
-                completion_tokens = self._count_tokens(chunk_answer)
-                total_prompt_tokens += prompt_tokens
-                total_completion_tokens += completion_tokens
-                
-                print(f"Processed QA chunk {i+1}/{len(chunks)}")
-            
-            # If we found relevant answers
-            if chunk_answers:
-                # Combine relevant answers
-                combined_answers = "\n\n".join(chunk_answers)
-                
-                # Generate a final consolidated answer
-                final_prompt = f"I found these potential answers to the question '{question}':\n\n{combined_answers}\n\nPlease provide a single coherent answer based on these findings."
-                
-                final_answer = self._call_huggingface_api(system_prompt, final_prompt)
-                
-                # Add token counts
-                final_prompt_tokens = self._count_tokens(system_prompt + final_prompt)
-                final_completion_tokens = self._count_tokens(final_answer)
-                total_prompt_tokens += final_prompt_tokens
-                total_completion_tokens += final_completion_tokens
-                
-                cost_info = self._calculate_cost(model_id, total_prompt_tokens, total_completion_tokens)
-                
-                return final_answer, cost_info
-            else:
-                # No relevant information found in any chunk
-                answer = "I cannot find information about this in the document."
-                cost_info = self._calculate_cost(model_id, total_prompt_tokens, total_completion_tokens)
-                return answer, cost_info
+        # Create a prompt that includes the retrieved context
+        system_prompt = "You are a helpful assistant that answers questions based on the provided document excerpts."
+        user_prompt = f"Document excerpts:\n\n{context_text}\n\nQuestion: {question}\n\nAnswer the question based only on the provided document excerpts. If the answer cannot be found in the excerpts, say so."
+        
+        # Generate an answer using the LLM
+        if "huggingface" in model_id:
+            answer = self._call_huggingface_api(system_prompt, user_prompt)
+        elif "gemini" in model_id:
+            answer = self._call_gemini_api(system_prompt, user_prompt)
         else:
-            # Original implementation for shorter documents or Gemini
-            user_prompt = f"Document: {document_content}\n\nQuestion: {question}\n\nAnswer:"
-            
-            try:
-                if model_id.startswith("gemini"):
-                    answer = self._call_gemini_api(system_prompt, user_prompt)
-                else:
-                    answer = self._call_huggingface_api(system_prompt, user_prompt)
-                
-                # Count tokens with tiktoken
-                prompt_tokens = self._count_tokens(system_prompt + user_prompt)
-                completion_tokens = self._count_tokens(answer)
-                
-                cost_info = self._calculate_cost(model_id, prompt_tokens, completion_tokens)
-                
-                return answer, cost_info
-            except Exception as e:
-                print(f"Error calling LLM API: {str(e)}")
-                return "Unable to answer question due to an error.", {
-                    "model": model_id,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "input_cost": 0,
-                    "output_cost": 0,
-                    "total_cost": 0
-                }
+            raise ValueError(f"Unsupported model: {model_id}")
+        
+        # Calculate token usage for cost tracking
+        prompt_tokens = self._count_tokens(system_prompt + user_prompt)
+        completion_tokens = self._count_tokens(answer)
+        
+        # Return the answer and cost info
+        cost_info = self._calculate_cost(model_id, prompt_tokens, completion_tokens)
+        
+        return answer, cost_info
     
     def _call_huggingface_api(self, system_prompt: str, user_prompt: str) -> str:
         """Call the HuggingFace API with improved prompting."""

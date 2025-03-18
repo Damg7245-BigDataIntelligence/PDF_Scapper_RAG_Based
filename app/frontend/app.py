@@ -119,11 +119,12 @@ def get_document_content(document_id):
         st.error(f"Error connecting to API: {str(e)}")
         return None
 
-def upload_pdf(file):
+def upload_pdf(file, use_mistral=False):
     """Upload PDF file to API"""
     try:
         files = {"file": (file.name, file.getvalue(), "application/pdf")}
-        response = requests.post(f"{API_URL}/upload_pdf", files=files)
+        params = {"use_mistral": str(use_mistral).lower()}
+        response = requests.post(f"{API_URL}/upload_pdf", files=files, params=params)
         if response.status_code == 200:
             return response.json()
         else:
@@ -173,6 +174,34 @@ def format_cost_info(cost_info):
     - Total Cost: ${cost_info['total_cost']:.8f}
     """
 
+def search_documents(query, top_k=5):
+    """Search for relevant document chunks"""
+    try:
+        data = {"query": query, "top_k": top_k}
+        response = requests.post(f"{API_URL}/search", json=data)
+        if response.status_code == 200:
+            return response.json()["results"]
+        else:
+            st.error(f"Error searching documents: {response.text}")
+            return []
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return []
+
+def ask_question_with_rag(document_id, question, model_id="huggingface/HuggingFaceH4/zephyr-7b-beta"):
+    """Ask a question using RAG"""
+    try:
+        data = {"document_id": document_id, "question": question, "model_id": model_id}
+        response = requests.post(f"{API_URL}/ask_question_rag", json=data)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error asking question: {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return None
+    
 def select_model(model_id):
     """Select a model and update session state"""
     st.session_state.selected_model = model_id
@@ -227,12 +256,20 @@ with st.sidebar:
     # Option to upload new PDF
     uploaded_file = st.file_uploader("Upload a PDF document", type=["pdf"])
     
+    # Add the OCR option
+    use_mistral = st.checkbox("Use Mistral OCR (better for scanned documents)", 
+                              value=False, 
+                              help="Select this for complex layouts or scanned documents")
+    
     if uploaded_file:
         if st.button("Process PDF"):
             with st.spinner("Processing PDF..."):
-                result = upload_pdf(uploaded_file)
+                result = upload_pdf(uploaded_file, use_mistral)
                 if result:
                     st.success(f"PDF uploaded successfully: {result['original_filename']}")
+                    # Show which processor was used
+                    processor_name = "Mistral OCR" if result.get('processor') == 'mistral_ocr' else "Docling"
+                    st.info(f"Document processed using: {processor_name}")
                     # Refresh document list
                     time.sleep(2)  # Wait for processing to complete
     
@@ -310,7 +347,7 @@ if st.session_state.selected_document and st.session_state.document_content:
         
         if question and st.button("Get Answer"):
             with st.spinner(f"Generating answer using {selected_model_info['name']}..."):
-                answer_result = ask_question(document['document_id'], question, st.session_state.selected_model)
+                answer_result = ask_question_with_rag(document['document_id'], question, st.session_state.selected_model)
                 if answer_result:
                     st.session_state.answer = answer_result['answer']
                     st.session_state.cost_info = answer_result['cost']
