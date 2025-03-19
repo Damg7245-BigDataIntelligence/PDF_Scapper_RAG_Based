@@ -26,5 +26,6 @@ litellm==1.63.3
 google-generativeai
 pinecone[grpc]
 langchain
+chromadb
 nltk
 sentence_transformers
