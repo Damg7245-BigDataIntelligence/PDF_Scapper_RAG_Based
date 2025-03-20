@@ -29,3 +29,7 @@ langchain
 chromadb
 nltk
 sentence_transformers
+
+selenium
+webdriver-manager
+beautifulsoup4
