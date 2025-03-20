@@ -31,7 +31,7 @@ def fetch_nvidia_financial_reports():
 
         select = Select(dropdown_element)
         years = [option.text for option in select.options if int(option.text) >= 2020]
-
+        print(years)
         reports = []  # List to store fetched reports
 
         for year in years:
@@ -69,12 +69,12 @@ def fetch_nvidia_financial_reports():
 
                                     response = requests.get(pdf_url, stream=True)
                                     pdf_filename = f"{year}_{ '_'.join(quarter_heading.split()[:2])}.pdf"
-                                    status = upload_file_to_s3(response.content, pdf_filename, str(year))
+                                    # status = upload_file_to_s3(response.content, pdf_filename, str(year))
                                     reports.append({
                                         "pdf_filename": pdf_filename,
                                         "content": response.content
                                     })
-                                    print(f"Uploaded PDF to S3: {status}")
+                                    print(f"Uploaded PDF to S3: {pdf_filename}")
 
                 except Exception as e:
                     #print(f"Uploaded PDF to S3: {status}")
@@ -87,6 +87,6 @@ def fetch_nvidia_financial_reports():
         driver.quit()
 
 # Example usage
-reports = fetch_nvidia_financial_reports()
-for report in reports:
-    print(f"Fetched: {report['pdf_filename']} (Size: {len(report['content'])} bytes)")
+# reports = fetch_nvidia_financial_reports()
+# for report in reports:
+#     print(f"Fetched: {report['pdf_filename']} (Size: {len(report['content'])} bytes)")

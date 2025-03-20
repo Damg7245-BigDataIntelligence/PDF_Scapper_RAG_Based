@@ -6,7 +6,7 @@ import google.generativeai as genai
 from sentenceChunking import get_text_chunks
 
 # Load environment variables
-dotenv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../..", ".env"))
+dotenv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
 load_dotenv(dotenv_path)
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")

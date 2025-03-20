@@ -173,3 +173,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# personal
+sample.pdf 
+test_mistral.py 

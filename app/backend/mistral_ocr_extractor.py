@@ -42,7 +42,7 @@ class MistralOCRExtractor:
         
         try:
             # First upload the PDF to S3 to get a URL
-            from .s3_utils import upload_pdf_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
+            from s3_utils import upload_pdf_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
             
             # Upload the PDF to S3 and get the URL
             s3_url = upload_pdf_to_s3(file_content, original_filename, document_id)
