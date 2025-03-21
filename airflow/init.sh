@@ -6,7 +6,8 @@ mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/d
 mkdir -p /opt/airflow/data/embeddings /opt/airflow/data/chroma_db /opt/airflow/data/pdfs
 
 # Initialize Airflow database
-airflow db init
+# Note the --skip-encryption flag for development
+airflow db init --skip-encryption
 
 # Create Airflow admin user
 airflow users create \

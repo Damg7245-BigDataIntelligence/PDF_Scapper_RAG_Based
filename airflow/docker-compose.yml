@@ -24,12 +24,16 @@ services:
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__CORE__FERNET_KEY=''
-      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__FERNET_KEY=
+      - AIRFLOW__CORE__ENCRYPT_S3_LOGS=false
+      - AIRFLOW__WEBSERVER__SECRET_KEY=any-random-string
+      - AIRFLOW__CORE__SECURE_MODE=false
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=false
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
-      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
-      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_api_key}
-      - PINECONE_ENV=${PINECONE_ENV:-your_pinecone_env}
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-pcsk_7S6Ri9_JgJjwFETVt5hbMPbPkzprMmyFuKU8cJZcawVRWpajBDwkmxF8A8m5mvAzkeSFoc}
+      - PINECONE_ENV=${PINECONE_ENV:-gcp-starter}
       - MODEL_PATH=${MODEL_PATH:-sentence-transformers/all-MiniLM-L6-v2}
     volumes:
       - ./dags:/opt/airflow/dags
@@ -52,12 +56,13 @@ services:
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__CORE__FERNET_KEY=oh9dPwRpLAeviQcjawwmL6iDmzrNGSDHwLhBWxIlCsU=
-      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__FERNET_KEY=
+      - AIRFLOW__CORE__ENCRYPT_S3_LOGS=false
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=false
       - AIRFLOW__CORE__LOAD_EXAMPLES=false
       - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
-      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_api_key}
-      - PINECONE_ENV=${PINECONE_ENV:-your_pinecone_env}
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-pcsk_7S6Ri9_JgJjwFETVt5hbMPbPkzprMmyFuKU8cJZcawVRWpajBDwkmxF8A8m5mvAzkeSFoc}
+      - PINECONE_ENV=${PINECONE_ENV:-gcp-starter}
       - MODEL_PATH=${MODEL_PATH:-sentence-transformers/all-MiniLM-L6-v2}
     volumes:
       - ./dags:/opt/airflow/dags
@@ -78,6 +83,10 @@ services:
       - /opt/airflow/init.sh
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=
+      - AIRFLOW__CORE__ENCRYPT_S3_LOGS=false
+      - AIRFLOW__WEBSERVER__SECRET_KEY=any-random-string
+      - AIRFLOW__CORE__SECURE_MODE=false
     volumes:
       - ./init.sh:/opt/airflow/init.sh
       - ./logs:/opt/airflow/logs
