@@ -180,3 +180,4 @@ cython_debug/
 sample.pdf 
 test_mistral.py 
 myenv
+embedding_service.py

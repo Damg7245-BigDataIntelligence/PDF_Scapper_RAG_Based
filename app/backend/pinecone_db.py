@@ -2,7 +2,7 @@ import os
 from sentence_transformers import SentenceTransformer
 from pinecone import Pinecone, ServerlessSpec
 import google.generativeai as genai
-from sentenceChunking import get_text_chunks
+from app.backend.sentenceChunking import get_text_chunks
 from dotenv import load_dotenv
 
 class PineconeResponder:
