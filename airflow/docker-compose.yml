@@ -1,49 +1,41 @@
 version: '3'
 
-x-airflow-common: &airflow-common
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.6.3}
-  environment:
-    &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-    AIRFLOW__CORE__FERNET_KEY: ''
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
-    # Add any environment variables needed for your DAGs
-    PINECONE_API_KEY: ${PINECONE_API_KEY:-your_pinecone_api_key}
-    PINECONE_ENV: ${PINECONE_ENV:-your_pinecone_env}
-    MODEL_PATH: ${MODEL_PATH:-sentence-transformers/all-MiniLM-L6-v2}
-  volumes:
-    - ./dags:/opt/airflow/dags
-    - ./logs:/opt/airflow/logs
-    - ./plugins:/opt/airflow/plugins
-    - ./data:/opt/airflow/data  # Shared data directory for embeddings and ChromaDB
-  depends_on:
-    &airflow-common-depends-on
-    postgres:
-      condition: service_healthy
-
 services:
   postgres:
     image: postgres:13
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 5s
       retries: 5
+      timeout: 30s
     restart: always
 
   airflow-webserver:
-    <<: *airflow-common
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.6.3}
     command: webserver
     ports:
       - 8080:8080
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__FERNET_KEY=''
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION='true'
+      - AIRFLOW__CORE__LOAD_EXAMPLES='false'
+      - AIRFLOW__API__AUTH_BACKENDS='airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_api_key}
+      - PINECONE_ENV=${PINECONE_ENV:-your_pinecone_env}
+      - MODEL_PATH=${MODEL_PATH:-sentence-transformers/all-MiniLM-L6-v2}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
@@ -51,69 +43,50 @@ services:
       retries: 5
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
-      airflow-init:
-        condition: service_completed_successfully
+      - airflow-init
+      - postgres
 
   airflow-scheduler:
-    <<: *airflow-common
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.6.3}
     command: scheduler
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__FERNET_KEY=''
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION='true'
+      - AIRFLOW__CORE__LOAD_EXAMPLES='false'
+      - AIRFLOW__API__AUTH_BACKENDS='airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_api_key}
+      - PINECONE_ENV=${PINECONE_ENV:-your_pinecone_env}
+      - MODEL_PATH=${MODEL_PATH:-sentence-transformers/all-MiniLM-L6-v2}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
-      airflow-init:
-        condition: service_completed_successfully
+      - airflow-init
+      - postgres
 
   airflow-init:
-    <<: *airflow-common
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.6.3}
     entrypoint: /bin/bash
+    user: "0:0"
     command:
       - -c
-      - |
-        function ver() {
-          printf "%04d%04d%04d%04d" $${1//./ }
-        }
-        # Install airflow if not already installed
-        pip install -q apache-airflow>=2.2.0
-        # Now check the version
-        airflow_version=$$(airflow version | head -n 1 | awk '{print $$2}')
-        airflow_version_comparable=$$(ver $${airflow_version})
-        min_airflow_version=2.2.0
-        min_airflow_version_comparable=$$(ver $${min_airflow_version})
-        if (( airflow_version_comparable < min_airflow_version_comparable )); then
-          echo
-          echo -e "\033[1;31mERROR!!!: Too old Airflow version $${airflow_version}!\033[0m"
-          echo "The minimum Airflow version supported: $${min_airflow_version}. Only use this or higher!"
-          echo
-          exit 1
-        fi
-        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/data
-        chown -R "50000:0" /sources/{logs,dags,plugins,data}
-        airflow db init
-        airflow users create \
-          --username airflow \
-          --password airflow \
-          --firstname John \
-          --lastname Doe \
-          --role Admin \
-          --email admin@example.com
+      - /opt/airflow/init.sh
     environment:
-      <<: *airflow-common-env
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
-    user: "0:0"
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
     volumes:
-      - ./:/sources
+      - ./init.sh:/opt/airflow/init.sh
+      - ./logs:/opt/airflow/logs
+      - ./dags:/opt/airflow/dags
+      - ./plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+    depends_on:
+      postgres:
+        condition: service_healthy
 
-  # Named volumes for data persistence to be shared with the app pipeline
-  # This allows Airflow to read/write to the same data that the backend uses
-  data-volume:
-    image: busybox
-    volumes:
-      - shared-data:/data
-    command: ["sh", "-c", "mkdir -p /data/embeddings /data/chroma_db /data/pdfs && chmod -R 777 /data && tail -f /dev/null"]
-    
 volumes:
   postgres-db-volume:
-  shared-data:  # This volume will be shared between pipelines
