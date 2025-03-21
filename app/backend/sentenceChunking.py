@@ -45,10 +45,10 @@ def get_text_chunks(file_path, max_length=256):
 
     return chunks
 
-# Example usage
-file_path = "/Users/janvichitroda/Documents/Janvi/NEU/Big_Data_Intelligence_Analytics/Assignment 4/Part 2/LLM_With_Pinecone/PineconeHandson/InputFiles/inputFile.md"
-chunks = get_text_chunks(file_path)
+# # Example usage
+# file_path = "/Users/janvichitroda/Documents/Janvi/NEU/Big_Data_Intelligence_Analytics/Assignment 4/Part 2/LLM_With_Pinecone/PineconeHandson/InputFiles/inputFile.md"
+# chunks = get_text_chunks(file_path)
 
-# Print the chunks
-for i, chunk in enumerate(chunks):
-    print(f"Chunk {i+1}:\n{chunk}\n")
+# # Print the chunks
+# for i, chunk in enumerate(chunks):
+#     print(f"Chunk {i+1}:\n{chunk}\n")
