@@ -1,9 +1,6 @@
 import boto3
 import os
 from dotenv import load_dotenv
-from botocore.exceptions import NoCredentialsError
-from pathlib import Path
-import io
 
 load_dotenv()
 
@@ -89,13 +86,20 @@ def upload_pdf_to_s3(file_content: bytes, original_filename: str, document_id: s
     except Exception as e:
         raise Exception(f"Failed to upload PDF to S3: {e}")
 
-def upload_markdown_to_s3(markdown_content: str, document_id: str, filename: str) -> str:
+def upload_markdown_to_s3(markdown_content: str, year: str, filename: str) -> str:
     """
     Uploads markdown content to S3.
     Returns URL for the uploaded file.
+    
+    Args:
+        markdown_content: The markdown content to upload
+        year: The year folder to use
+        filename: The filename to use (should end with .md)
     """
     try:
-        markdown_key = f"documents/markdown/{document_id}/{filename}.md"
+        # Ensure consistent path structure with PDF storage
+        markdown_key = f"documents/markdown/{year}/{filename}"
+        
         s3_client.put_object(
             Bucket=AWS_S3_BUCKET_NAME,
             Key=markdown_key,
@@ -118,13 +122,25 @@ def get_pdf_from_s3(document_id: str, filename: str) -> bytes:
     except Exception as e:
         raise Exception(f"Failed to get PDF from S3: {e}")
 
-def get_markdown_from_s3(document_id: str, filename: str) -> str:
+def get_markdown_from_s3(document_id: str, filename: str = None) -> str:
     """
     Gets markdown content from S3.
     Returns the markdown content as a string.
+    
+    Args:
+        document_id: Document ID (format: YYYY_Quarter)
+        filename: Optional filename (if different from document_id)
     """
     try:
-        markdown_key = f"documents/markdown/{document_id}/{filename}.md"
+        # Extract year from document_id
+        year = document_id.split('_')[0]
+        
+        # Use filename if provided, otherwise use document_id
+        md_filename = filename if filename else f"{document_id}.md"
+        
+        # Use consistent path structure
+        markdown_key = f"documents/markdown/{year}/{md_filename}"
+        
         response = s3_client.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=markdown_key)
         return response['Body'].read().decode('utf-8')
     except Exception as e:

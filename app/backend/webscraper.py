@@ -6,7 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 import requests
-from app.backend.s3_utils import upload_file_to_s3
+from s3_utils import upload_file_to_s3
 
 def fetch_nvidia_financial_reports():
     url = "https://investor.nvidia.com/financial-info/quarterly-results/default.aspx"
@@ -30,7 +30,7 @@ def fetch_nvidia_financial_reports():
         )
 
         select = Select(dropdown_element)
-        years = [option.text for option in select.options if int(option.text) >= 2020]
+        years = [option.text for option in select.options if int(option.text) >= 2021]
         print(years)
         reports = []  # List to store fetched reports
 
@@ -40,7 +40,7 @@ def fetch_nvidia_financial_reports():
             time.sleep(2)  
 
             quarters = driver.find_elements(By.XPATH, "//div[contains(@class, 'evergreen-accordion-header')]")
-            print(f"Found {len(quarters)} quarters for year {year}. Processing...")
+            print(f"Found {len(quarters)//2} quarters for year {year}. Processing...")
 
             for quarter in quarters:
                 try:
@@ -69,10 +69,13 @@ def fetch_nvidia_financial_reports():
 
                                     response = requests.get(pdf_url, stream=True)
                                     pdf_filename = f"{year}_{ '_'.join(quarter_heading.split()[:2])}.pdf"
-                                    status = upload_file_to_s3(response.content, pdf_filename, str(year))
+                                    s3_key = f"documents/pdf/{year}/{pdf_filename}"
+                                    s3_url = upload_file_to_s3(response.content, s3_key)
                                     reports.append({
                                         "pdf_filename": pdf_filename,
-                                        "content": response.content
+                                        "content": response.content,
+                                        "s3_url": s3_url,
+                                        "year": year
                                     })
                                     print(f"Uploaded PDF to S3: {pdf_filename}")
 

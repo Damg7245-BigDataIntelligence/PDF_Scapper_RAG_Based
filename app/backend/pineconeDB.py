@@ -3,7 +3,7 @@ from pinecone import Pinecone, ServerlessSpec
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
-from app.backend.sentenceChunking import get_text_chunks
+from sentenceChunking import get_text_chunks
 
 # Load environment variables
 dotenv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))

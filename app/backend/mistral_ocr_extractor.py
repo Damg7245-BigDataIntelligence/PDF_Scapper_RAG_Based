@@ -1,11 +1,9 @@
 import os
-from pathlib import Path
-from typing import Dict, Tuple, Any, Optional
-from datetime import datetime
+from typing import Tuple
 from mistralai import Mistral
 from dotenv import load_dotenv
-from app.backend.s3_utils import upload_pdf_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
-
+from s3_utils import upload_pdf_to_s3, upload_markdown_to_s3
+import base64
 # Load environment variables
 load_dotenv()
 
@@ -27,7 +25,7 @@ class MistralOCRExtractor:
         self.model = "mistral-ocr-latest"
         print("Mistral OCR extractor initialized successfully")
     
-    def extract_text(self, file_content: bytes, original_filename: str, document_id: str) -> Tuple[str, str]:
+    def extract_text(self, file_content: bytes, original_filename: str, document_id: str, s3_url: str = None) -> Tuple[str, str]:
         """
         Extract text from a document using Mistral OCR API
         
@@ -35,6 +33,7 @@ class MistralOCRExtractor:
             file_content: The binary content of the file
             original_filename: Original filename
             document_id: Document ID for S3 path
+            s3_url: Optional S3 URL of the already uploaded file
             
         Returns:
             Tuple of (raw_text, markdown_content)
@@ -42,10 +41,13 @@ class MistralOCRExtractor:
         print(f"Extracting text using Mistral OCR API for {original_filename}...")
         
         try:
-            # First upload the PDF to S3 to get a URL
-            # Upload the PDF to S3 and get the URL
-            s3_url = upload_pdf_to_s3(file_content, original_filename, document_id)
-            print(f"PDF uploaded to S3: {s3_url}")
+            # Use provided S3 URL if available
+            if s3_url:
+                print(f"Using existing S3 URL: {s3_url}")
+            else:
+                # First upload the PDF to S3 to get a URL
+                s3_url = upload_pdf_to_s3(file_content, original_filename, document_id)
+                print(f"PDF uploaded to S3: {s3_url}")
             
             # Use the S3 URL with Mistral OCR
             ocr_response = self.client.ocr.process(
@@ -70,6 +72,17 @@ class MistralOCRExtractor:
             raw_text = "\n\n".join(raw_text_parts)
             
             print(f"Successfully extracted {len(markdown_content)} characters with Mistral OCR")
+            
+            # Get the year from document_id (assuming format like "2023_Q1")
+            year = document_id.split('_')[0]
+            
+            try:
+                # Use upload_markdown_to_s3 with the correct path structure
+                markdown_filename = f"{document_id}.md"
+                markdown_url = upload_markdown_to_s3(markdown_content, year, markdown_filename)
+                print(f"Markdown content uploaded to S3: {markdown_url}")
+            except Exception as e:
+                print(f"Warning: Failed to upload markdown to S3: {e}")
             
             return raw_text, markdown_content
             
