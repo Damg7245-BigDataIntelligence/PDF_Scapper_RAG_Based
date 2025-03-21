@@ -40,86 +40,81 @@ def generate_embeddings(text, model_name="sentence-transformers/all-MiniLM-L6-v2
     else:
         return model.encode(text).tolist()
 
-def store_in_chromadb(embeddings_data, collection_name="nvidia_financials"):
-    """Store embeddings data in ChromaDB"""
+def store_in_chromadb(embeddings_data, collection_name="documents", host="chroma-db", port=8000):
+    """Store embeddings in ChromaDB"""
     try:
-        # First try to get the app's client if we're in a FastAPI context
-        import inspect
-        from fastapi import FastAPI
-        
-        app = None
-        for frame_info in inspect.stack():
-            if 'app' in frame_info.frame.f_locals:
-                potential_app = frame_info.frame.f_locals['app']
-                if isinstance(potential_app, FastAPI):
-                    app = potential_app
-                    break
-        
-        if app and hasattr(app, 'chroma_client'):
-            # Use the app's persistent client
-            client = app.chroma_client
-            print("Using app's persistent ChromaDB client for storage")
-        else:
-            # Fall back to in-memory client like in chromadbtest.py
-            client = chromadb.Client()
-            print("Using in-memory ChromaDB client for storage")
-        
-        # Get or create collection
+        # Try to connect to the ChromaDB server first
         try:
-            collection = client.get_collection(name=collection_name)
-        except:
-            collection = client.create_collection(name=collection_name)
+            # Connect to the Docker ChromaDB service
+            client = chromadb.HttpClient(host=host, port=port)
+            print(f"Connected to ChromaDB service at {host}:{port}")
+        except Exception as e:
+            print(f"Failed to connect to ChromaDB service: {str(e)}")
+            # Fall back to persistent client if HttpClient fails
+            try:
+                client = chromadb.PersistentClient(path="./data/chroma_db")
+                print("Using local persistent ChromaDB client")
+            except Exception as e2:
+                print(f"Failed to create persistent client: {str(e2)}")
+                # Last resort: use in-memory client
+                client = chromadb.Client()
+                print("Falling back to in-memory ChromaDB client")
         
-        # Prepare data for ChromaDB
-        ids = []
-        documents = []
-        embeddings = []
-        metadatas = []
-        
-        for i, item in enumerate(embeddings_data):
-            chunk_id = f"{item['metadata']['document_id']}_chunk_{i}"
-            ids.append(chunk_id)
-            documents.append(item['content'])
-            embeddings.append(item['embedding'])
-            metadatas.append(item['metadata'])
-        
-        # Add to collection - using the same format as chromadbtest.py
-        collection.add(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas
-        )
-        
-        print(f"Stored {len(embeddings_data)} chunks in ChromaDB collection '{collection_name}'")
-        return True
+        # Get or create the collection
+        try:
+            collection = client.get_or_create_collection(name=collection_name)
+            
+            # Extract the necessary data for ChromaDB
+            documents = []
+            metadatas = []
+            embeddings = []
+            ids = []
+            
+            for i, item in enumerate(embeddings_data):
+                documents.append(item.get("content", ""))
+                metadatas.append(item.get("metadata", {}))
+                embeddings.append(item.get("embedding", []))
+                # Generate a unique ID for each document
+                ids.append(f"{collection_name}_{item.get('metadata', {}).get('document_id', '')}_{i}")
+            
+            # Add the documents to the collection
+            collection.add(
+                documents=documents,
+                metadatas=metadatas,
+                embeddings=embeddings,
+                ids=ids
+            )
+            
+            print(f"Successfully stored {len(embeddings_data)} documents in ChromaDB collection '{collection_name}'")
+            return True
+        except Exception as e:
+            print(f"Error adding documents to ChromaDB: {str(e)}")
+            raise e
+            
     except Exception as e:
         print(f"Error storing in ChromaDB: {str(e)}")
+        # Return False to indicate failure but don't crash the application
         return False
 
 def search_chromadb(query, collection_name="nvidia_financials", where_filter=None, top_k=5):
     """Search for similar documents in ChromaDB"""
     try:
-        # First try to get the app's client if we're in a FastAPI context
-        import inspect
-        from fastapi import FastAPI
-        
-        app = None
-        for frame_info in inspect.stack():
-            if 'app' in frame_info.frame.f_locals:
-                potential_app = frame_info.frame.f_locals['app']
-                if isinstance(potential_app, FastAPI):
-                    app = potential_app
-                    break
-        
-        if app and hasattr(app, 'chroma_client'):
-            # Use the app's persistent client
-            client = app.chroma_client
-            print("Using app's persistent ChromaDB client for search")
-        else:
-            # Fall back to in-memory client like in chromadbtest.py
-            client = chromadb.Client()
-            print("Using in-memory ChromaDB client for search")
+        # Try to connect to the ChromaDB server first
+        try:
+            # Connect to the Docker ChromaDB service
+            client = chromadb.HttpClient(host="chroma-db", port=8000)
+            print("Connected to ChromaDB service at chroma-db:8000 for search")
+        except Exception as e:
+            print(f"Failed to connect to ChromaDB service: {str(e)}")
+            # Fall back to persistent client if HttpClient fails
+            try:
+                client = chromadb.PersistentClient(path="/app/data/chroma_db")
+                print("Using local persistent ChromaDB client for search")
+            except Exception as e2:
+                print(f"Failed to create persistent client: {str(e2)}")
+                # Last resort: use in-memory client
+                client = chromadb.Client()
+                print("Falling back to in-memory ChromaDB client for search")
         
         # Get the collection
         try:
@@ -259,7 +254,7 @@ def search_pinecone(query, index_name="nvidia-financials", filter_dict=None, top
         print(f"Error searching Pinecone: {str(e)}")
         return []
 
-def store_embeddings_json(embeddings_data, file_path="data/embeddings/nvidia_embeddings.json"):
+def store_embeddings_json(embeddings_data, file_path="/app/data/embeddings/nvidia_embeddings.json"):
     """Store embeddings in a JSON file"""
     try:
         # Create directory if it doesn't exist
@@ -268,8 +263,12 @@ def store_embeddings_json(embeddings_data, file_path="data/embeddings/nvidia_emb
         
         # Load existing data if file exists
         if file_path.exists():
-            with open(file_path, 'r') as f:
-                data = json.load(f)
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+            except json.JSONDecodeError:
+                print(f"Warning: Corrupted JSON file at {file_path}, creating new")
+                data = []
         else:
             # Initialize new data structure
             data = []
@@ -292,7 +291,7 @@ def store_embeddings_json(embeddings_data, file_path="data/embeddings/nvidia_emb
         print(f"Error storing in JSON: {str(e)}")
         return False
 
-def search_embeddings_json(query, embeddings_file="data/embeddings/nvidia_embeddings.json", quarter_filter=None, top_k=5):
+def search_embeddings_json(query, embeddings_file="/app/data/embeddings/nvidia_embeddings.json", quarter_filter=None, top_k=5):
     """Search embeddings.json file for relevant chunks"""
     if not os.path.exists(embeddings_file):
         print(f"Embeddings file not found: {embeddings_file}")
@@ -300,9 +299,13 @@ def search_embeddings_json(query, embeddings_file="data/embeddings/nvidia_embedd
     
     try:
         # Load embeddings
-        with open(embeddings_file, 'r') as f:
-            data = json.load(f)
-        
+        try:
+            with open(embeddings_file, 'r') as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"Error reading embeddings file: {str(e)}")
+            return []
+            
         # Filter by quarters if provided
         if quarter_filter and len(quarter_filter) > 0:
             filtered_data = [
