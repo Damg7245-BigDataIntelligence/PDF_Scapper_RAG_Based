@@ -6,270 +6,347 @@ from pathlib import Path
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
-
-# Optional imports for different vector DBs
-try:
-    from pinecone import Pinecone, ServerlessSpec
-    PINECONE_AVAILABLE = True
-except ImportError:
-    PINECONE_AVAILABLE = False
-    print("Pinecone not available. Install with: pip install pinecone-client")
-
-try:
-    import chromadb
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    CHROMADB_AVAILABLE = False
-    print("ChromaDB not available. Install with: pip install chromadb")
+import chromadb
+from pinecone import Pinecone, ServerlessSpec
 
 # Load environment variables
 load_dotenv()
 
-class VectorStorageService:
-    def __init__(self, embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"):
-        """
-        Initialize the vector storage service with support for multiple backends
-        
-        Args:
-            embedding_model: The model to use for embeddings
-        """
-        # Get API tokens from environment
-        self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
-        self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        self.pinecone_env = os.getenv("PINECONE_ENVIRONMENT")
-        
-        # Initialize embedding model
+# Global model cache for efficiency
+_model = None
+
+def get_embedding_model(model_name="sentence-transformers/all-MiniLM-L6-v2"):
+    """Get or initialize the embedding model"""
+    global _model
+    if _model is None:
         try:
-            self.model = SentenceTransformer(embedding_model, token=self.hf_token)
-            self.model_name = embedding_model
-            print(f"Embedding model initialized: {self.model_name}")
+            _model = SentenceTransformer(model_name)
+            print(f"Embedding model initialized: {model_name}")
         except Exception as e:
             print(f"Error initializing embedding model: {str(e)}")
-            # Use a simpler fallback model if available
             try:
-                self.model = SentenceTransformer("all-MiniLM-L6-v2", token=self.hf_token)
-                self.model_name = "all-MiniLM-L6-v2"
-                print(f"Using fallback model: {self.model_name}")
+                _model = SentenceTransformer("all-MiniLM-L6-v2")
+                print("Using fallback model: all-MiniLM-L6-v2")
             except Exception as e2:
                 raise Exception(f"Failed to initialize embedding model: {str(e2)}")
+    return _model
+
+def generate_embeddings(text, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+    """Generate embeddings for text using the specified model"""
+    model = get_embedding_model(model_name)
+    # Handle single string or list of strings
+    if isinstance(text, str):
+        return model.encode(text).tolist()
+    else:
+        return model.encode(text).tolist()
+
+def store_in_chromadb(embeddings_data, collection_name="nvidia_financials"):
+    """Store embeddings data in ChromaDB"""
+    try:
+        # First try to get the app's client if we're in a FastAPI context
+        import inspect
+        from fastapi import FastAPI
         
-        # Set up local storage
-        self.embeddings_path = Path("data/embeddings.json")
-        self.embeddings_path.parent.mkdir(parents=True, exist_ok=True)
+        app = None
+        for frame_info in inspect.stack():
+            if 'app' in frame_info.frame.f_locals:
+                potential_app = frame_info.frame.f_locals['app']
+                if isinstance(potential_app, FastAPI):
+                    app = potential_app
+                    break
         
-        # Initialize backends based on availability
-        self.backends = {}
-        
-        # Always initialize local JSON storage
-        self.backends["json"] = self._load_json_embeddings()
-        
-        # Initialize Pinecone if available
-        if PINECONE_AVAILABLE and self.pinecone_api_key:
-            try:
-                # Initialize Pinecone using the latest API
-                pc = Pinecone(api_key=self.pinecone_api_key)
-                index_name = "nvidia-financials"
-                
-                # Check if index exists, create if not
-                if index_name not in [idx["name"] for idx in pc.list_indexes()]:
-                    pc.create_index(
-                        name=index_name,
-                        dimension=self.model.get_sentence_embedding_dimension(),
-                        metric="cosine",
-                        spec=ServerlessSpec(cloud="aws", region="us-east-1")
-                    )
-                
-                self.backends["pinecone"] = {
-                    "index": pc.Index(index_name),
-                    "info": {"index_name": index_name}
-                }
-                print(f"Pinecone initialized with index: {index_name}")
-            except Exception as e:
-                print(f"Error initializing Pinecone: {str(e)}")
-        
-        # Initialize ChromaDB if available
-        if CHROMADB_AVAILABLE:
-            try:
-                chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIR", "data/chroma_db")
-                os.makedirs(chroma_persist_dir, exist_ok=True)
-                
-                print(f"ChromaDB will store data in: {os.path.abspath(chroma_persist_dir)}")
-        
-                chroma_client = chromadb.PersistentClient(path=chroma_persist_dir)
-                collection_name = "nvidia-financials"
-                
-                # Get or create collection
-                self.backends["chromadb"] = {
-                    "collection": chroma_client.get_or_create_collection(name=collection_name),
-                    "info": {"collection_name": collection_name, "persist_dir": chroma_persist_dir}
-                }
-                print(f"ChromaDB initialized with persistant collection: {collection_name}")
-            except Exception as e:
-                print(f"Error initializing ChromaDB: {str(e)}")
-    
-    def _load_json_embeddings(self) -> Dict[str, Any]:
-        """Load embeddings from JSON file if it exists"""
-        if self.embeddings_path.exists():
-            with open(self.embeddings_path, 'r') as f:
-                return json.load(f)
+        if app and hasattr(app, 'chroma_client'):
+            # Use the app's persistent client
+            client = app.chroma_client
+            print("Using app's persistent ChromaDB client for storage")
         else:
-            # Initialize with empty structure
-            return {
-                "metadata": {
-                    "model_name": self.model_name,
-                    "last_updated": datetime.now().isoformat(),
-                },
-                "documents": {}
+            # Fall back to in-memory client like in chromadbtest.py
+            client = chromadb.Client()
+            print("Using in-memory ChromaDB client for storage")
+        
+        # Get or create collection
+        try:
+            collection = client.get_collection(name=collection_name)
+        except:
+            collection = client.create_collection(name=collection_name)
+        
+        # Prepare data for ChromaDB
+        ids = []
+        documents = []
+        embeddings = []
+        metadatas = []
+        
+        for i, item in enumerate(embeddings_data):
+            chunk_id = f"{item['metadata']['document_id']}_chunk_{i}"
+            ids.append(chunk_id)
+            documents.append(item['content'])
+            embeddings.append(item['embedding'])
+            metadatas.append(item['metadata'])
+        
+        # Add to collection - using the same format as chromadbtest.py
+        collection.add(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+        
+        print(f"Stored {len(embeddings_data)} chunks in ChromaDB collection '{collection_name}'")
+        return True
+    except Exception as e:
+        print(f"Error storing in ChromaDB: {str(e)}")
+        return False
+
+def search_chromadb(query, collection_name="nvidia_financials", where_filter=None, top_k=5):
+    """Search for similar documents in ChromaDB"""
+    try:
+        # First try to get the app's client if we're in a FastAPI context
+        import inspect
+        from fastapi import FastAPI
+        
+        app = None
+        for frame_info in inspect.stack():
+            if 'app' in frame_info.frame.f_locals:
+                potential_app = frame_info.frame.f_locals['app']
+                if isinstance(potential_app, FastAPI):
+                    app = potential_app
+                    break
+        
+        if app and hasattr(app, 'chroma_client'):
+            # Use the app's persistent client
+            client = app.chroma_client
+            print("Using app's persistent ChromaDB client for search")
+        else:
+            # Fall back to in-memory client like in chromadbtest.py
+            client = chromadb.Client()
+            print("Using in-memory ChromaDB client for search")
+        
+        # Get the collection
+        try:
+            collection = client.get_collection(name=collection_name)
+        except Exception as e:
+            print(f"Collection '{collection_name}' not found: {str(e)}")
+            return []
+        
+        # Generate embedding for query
+        query_embedding = generate_embeddings(query)
+        
+        # Execute query - use the same format as in chromadbtest.py
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            where=where_filter
+        )
+        
+        # Format results
+        formatted_results = []
+        
+        if results and 'documents' in results and len(results['documents']) > 0:
+            for i in range(len(results['documents'][0])):
+                metadata = results['metadatas'][0][i] if 'metadatas' in results and len(results['metadatas']) > 0 else {}
+                distance = results['distances'][0][i] if 'distances' in results and len(results['distances']) > 0 else 1.0
+                
+                formatted_results.append({
+                    "text": results['documents'][0][i],
+                    "document_id": metadata.get("document_id", "unknown"),
+                    "quarter": metadata.get("quarter", "unknown"),
+                    "similarity": 1.0 - float(distance)  # Convert distance to similarity
+                })
+        
+        return formatted_results
+    except Exception as e:
+        print(f"Error searching ChromaDB: {str(e)}")
+        return []
+
+def store_in_pinecone(embeddings_data, index_name="nvidia-financials"):
+    """Store embeddings data in Pinecone"""
+    try:
+        # Initialize Pinecone if not already initialized
+        api_key = os.getenv("PINECONE_API_KEY")
+        environment = os.getenv("PINECONE_ENVIRONMENT", "us-west1-gcp")
+        
+        if not api_key:
+            raise ValueError("Pinecone API key not configured")
+            
+        pc = Pinecone(api_key=api_key)
+        
+        # Check if index exists
+        if index_name not in [idx["name"] for idx in pc.list_indexes()]:
+            # Get dimension from first embedding
+            dimension = len(embeddings_data[0]['embedding'])
+            
+            # Create index with the right dimension
+            pc.create_index(
+                name=index_name,
+                dimension=dimension,
+                metric="cosine",
+                spec=ServerlessSpec(
+                    cloud="aws",
+                    region="us-east-1"
+                )
+            )
+        
+        # Get index
+        index = pc.Index(index_name)
+        
+        # Prepare vectors for Pinecone
+        vectors = []
+        
+        for i, item in enumerate(embeddings_data):
+            chunk_id = f"{item['metadata']['document_id']}_chunk_{i}"
+            vector = {
+                    "id": chunk_id,
+                "values": item['embedding'],
+                    "metadata": {
+                    "text": item['content'],
+                    **item['metadata']
+                }
             }
-    
-    def _save_json_embeddings(self) -> None:
-        """Save embeddings to JSON file"""
-        with open(self.embeddings_path, 'w') as f:
-            json.dump(self.backends["json"], f)
-    
-    def compute_embeddings(self, chunks: List[str]) -> List[List[float]]:
-        """Compute embeddings for a list of text chunks"""
-        # Convert the embeddings to Python lists for JSON serialization
-        return [embedding.tolist() for embedding in self.model.encode(chunks)]
-    
-    def store_document(self, document_id: str, chunks: List[str], metadata: Dict[str, Any]) -> None:
-        """
-        Store document chunks and their embeddings in all available backends
+            vectors.append(vector)
         
-        Args:
-            document_id: Unique identifier for the document
-            chunks: List of text chunks to store
-            metadata: Additional metadata for the document
-        """
-        # Compute embeddings for all chunks
-        chunk_embeddings = self.compute_embeddings(chunks)
+        # Upsert in batches
+            batch_size = 100
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i:i + batch_size]
+            index.upsert(vectors=batch)
         
-        # Store in JSON
-        self._store_in_json(document_id, chunks, chunk_embeddings, metadata)
+        print(f"Stored {len(embeddings_data)} chunks in Pinecone index '{index_name}'")
+        return True
+    except Exception as e:
+        print(f"Error storing in Pinecone: {str(e)}")
+        return False
+
+def search_pinecone(query, index_name="nvidia-financials", filter_dict=None, top_k=5):
+    """Search for similar documents in Pinecone"""
+    try:
+        # Initialize Pinecone
+        api_key = os.getenv("PINECONE_API_KEY")
         
-        # Store in Pinecone if available
-        if "pinecone" in self.backends:
-            self._store_in_pinecone(document_id, chunks, chunk_embeddings, metadata)
+        if not api_key:
+            raise ValueError("Pinecone API key not configured")
+            
+        pc = Pinecone(api_key=api_key)
         
-        # Store in ChromaDB if available
-        if "chromadb" in self.backends:
-            self._store_in_chromadb(document_id, chunks, chunk_embeddings, metadata)
+        # Generate embedding for query
+        query_embedding = generate_embeddings(query)
+        print("Query embedding: ", query_embedding)
+        # Get Pinecone index
+        index = pc.Index(index_name)
         
-        print(f"Document {document_id} stored in all available backends")
-    
-    def _store_in_json(self, document_id: str, chunks: List[str], 
-                       chunk_embeddings: List[List[float]], metadata: Dict[str, Any]) -> None:
-        """Store document in JSON backend"""
-        # Check if document already exists
-        if document_id in self.backends["json"]["documents"]:
-            print(f"Document {document_id} already exists in JSON storage. Updating...")
+        # Query the index
+        results = index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True,
+            filter=filter_dict
+        )
+        print("Results from Pinecone: ", results)
+        # Format results
+        formatted_results = []
         
-        # Create chunk data with text and embeddings
-        chunk_data = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
-            chunk_data.append({
-                "chunk_id": f"{document_id}_chunk_{i}",
-                "text": chunk,
-                "embedding": embedding
+        for match in results.get("matches", []):
+            metadata = match.get("metadata", {})
+            
+            formatted_results.append({
+                "text": metadata.get("text", ""),
+                "document_id": metadata.get("document_id", "unknown"),
+                "quarter": metadata.get("quarter", "unknown"),
+                "similarity": float(match.get("score", 0.0))
             })
         
-        # Add to embeddings data structure (overwrites if exists)
-        self.backends["json"]["documents"][document_id] = {
-            "metadata": metadata,
-            "chunks": chunk_data,
-            "added_at": datetime.now().isoformat()
-        }
+        return formatted_results
+    except Exception as e:
+        print(f"Error searching Pinecone: {str(e)}")
+        return []
+
+def store_embeddings_json(embeddings_data, file_path="data/embeddings/nvidia_embeddings.json"):
+    """Store embeddings in a JSON file"""
+    try:
+        # Create directory if it doesn't exist
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Update last_updated timestamp
-        self.backends["json"]["metadata"]["last_updated"] = datetime.now().isoformat()
+        # Load existing data if file exists
+        if file_path.exists():
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        else:
+            # Initialize new data structure
+            data = []
         
-        # Save to disk
-        self._save_json_embeddings()
-        print(f"Stored {len(chunks)} chunks in JSON embeddings file")
+        # Add new embeddings
+        for item in embeddings_data:
+            data.append({
+                "content": item['content'],
+                "embedding": item['embedding'],
+                "metadata": item['metadata']
+            })
+        
+        # Save to file
+        with open(file_path, 'w') as f:
+            json.dump(data, f)
+        
+        print(f"Stored {len(embeddings_data)} chunks in {file_path}")
+        return True
+    except Exception as e:
+        print(f"Error storing in JSON: {str(e)}")
+        return False
+
+def search_embeddings_json(query, embeddings_file="data/embeddings/nvidia_embeddings.json", quarter_filter=None, top_k=5):
+    """Search embeddings.json file for relevant chunks"""
+    if not os.path.exists(embeddings_file):
+        print(f"Embeddings file not found: {embeddings_file}")
+        return []
     
-    def _store_in_pinecone(self, document_id: str, chunks: List[str],
-                          chunk_embeddings: List[List[float]], metadata: Dict[str, Any]) -> None:
-        """Store document in Pinecone backend"""
-        try:
-            vectors_to_upsert = []
-            
-            for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
-                chunk_id = f"{document_id}_chunk_{i}"
+    try:
+        # Load embeddings
+        with open(embeddings_file, 'r') as f:
+            data = json.load(f)
+        
+        # Filter by quarters if provided
+        if quarter_filter and len(quarter_filter) > 0:
+            filtered_data = [
+                item for item in data 
+                if "metadata" in item and 
+                "quarter" in item["metadata"] and 
+                item["metadata"]["quarter"] in quarter_filter
+            ]
+        else:
+            filtered_data = data
+        
+        # If no data after filtering, return empty results
+        if not filtered_data:
+            return []
+        
+        # Generate embedding for the question
+        query_embedding = generate_embeddings(query)
+        
+        # Compute cosine similarity with all chunks
+        def cosine_similarity(vec1, vec2):
+            return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+        
+        similarities = []
+        for item in filtered_data:
+            if "embedding" in item:
+                similarity = cosine_similarity(
+                    np.array(query_embedding), 
+                    np.array(item["embedding"])
+                )
                 
-                # Create vector object for Pinecone
-                vector = {
-                    "id": chunk_id,
-                    "values": embedding,
-                    "metadata": {
-                        "text": chunk,
-                        "document_id": document_id,
-                        "chunk_index": i,
-                        **metadata
-                    }
-                }
-                
-                vectors_to_upsert.append(vector)
-            
-            # Upsert in batches to avoid request size limits
-            batch_size = 100
-            for i in range(0, len(vectors_to_upsert), batch_size):
-                batch = vectors_to_upsert[i:i + batch_size]
-                self.backends["pinecone"]["index"].upsert(batch)
-            
-            print(f"Stored {len(chunks)} chunks in Pinecone")
-        except Exception as e:
-            print(f"Error storing in Pinecone: {str(e)}")
-    
-    def _store_in_chromadb(self, document_id: str, chunks: List[str],
-                          chunk_embeddings: List[List[float]], metadata: Dict[str, Any]) -> None:
-        """Store document in ChromaDB backend"""
-        try:
-            # Prepare IDs, embeddings, metadatas for ChromaDB
-            ids = [f"{document_id}_chunk_{i}" for i in range(len(chunks))]
-            embeddings = chunk_embeddings
-            
-            # Copy metadata for each chunk
-            metadatas = []
-            for i, chunk in enumerate(chunks):
-                chunk_metadata = metadata.copy()
-                chunk_metadata["document_id"] = document_id
-                chunk_metadata["chunk_index"] = i
-                chunk_metadata["text"] = chunk
-                metadatas.append(chunk_metadata)
-            
-            # Check if document already exists in ChromaDB
-            try:
-                # Get the first chunk ID to check if it exists
-                test_id = f"{document_id}_chunk_0"
-                existing_docs = self.backends["chromadb"]["collection"].get(ids=[test_id])
-                
-                if existing_docs and len(existing_docs['ids']) > 0:
-                    # Document exists, delete all chunks for this document first
-                    print(f"Document {document_id} already exists in ChromaDB. Removing old chunks...")
-                    
-                    # Get all chunks for this document
-                    query_results = self.backends["chromadb"]["collection"].get(
-                        where={"document_id": document_id}
-                    )
-                    
-                    if query_results and len(query_results['ids']) > 0:
-                        # Delete existing chunks
-                        self.backends["chromadb"]["collection"].delete(
-                            ids=query_results['ids']
-                        )
-                        print(f"Removed {len(query_results['ids'])} existing chunks from ChromaDB")
-            except Exception as check_error:
-                # If there's an error checking, just proceed with adding
-                print(f"Error checking for existing document: {check_error}")
-            
-            # Now add the new chunks
-            self.backends["chromadb"]["collection"].add(
-                ids=ids,
-                embeddings=embeddings,
-                metadatas=metadatas,
-                documents=chunks
-            )
-            
-            print(f"Stored {len(chunks)} chunks in ChromaDB")
-        except Exception as e:
-            print(f"Error storing in ChromaDB: {str(e)}")
+                similarities.append({
+                    "text": item["content"],
+                    "document_id": item.get("metadata", {}).get("document_id", "unknown"),
+                    "quarter": item.get("metadata", {}).get("quarter", "unknown"),
+                    "filename": item.get("metadata", {}).get("filename", "unknown"),
+                    "similarity": float(similarity)
+                })
+        
+        # Sort by similarity (highest first)
+        similarities.sort(key=lambda x: x["similarity"], reverse=True)
+        
+        # Return top-k results
+        return similarities[:top_k]
+        
+    except Exception as e:
+        print(f"Error searching embeddings: {str(e)}")
+        return []

@@ -18,6 +18,6 @@ selenium
 webdriver-manager
 beautifulsoup4
 
-apache-airflow 
+apache-airflow>=2.6.3
 apache-airflow-providers-python
 apache-airflow-providers-dummy

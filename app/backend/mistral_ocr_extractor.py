@@ -1,91 +1,129 @@
+"""Module for extracting text from PDF documents using Mistral OCR"""
 import os
-from typing import Tuple
+import logging
 from mistralai import Mistral
-from dotenv import load_dotenv
-from s3_utils import upload_pdf_to_s3, upload_markdown_to_s3
-import base64
-# Load environment variables
-load_dotenv()
+from s3_utils import upload_pdf_to_s3, upload_file_to_s3
 
-class MistralOCRExtractor:
-    """Extract text from documents using Mistral's OCR API"""
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def extract_text_with_mistral(pdf_path: str) -> str:
+    """
+    Extract text from a PDF file using Mistral OCR
     
-    def __init__(self):
-        """Initialize the Mistral OCR extractor"""
+    Args:
+        pdf_path: Path to the PDF file
+        
+    Returns:
+        Extracted text content
+    """
+    try:
         # Get API key from environment
-        self.api_key = os.getenv("MISTRAL_API_KEY")
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if not api_key:
+            raise ValueError("MISTRAL_API_KEY environment variable is not set")
+            
+        # Create client
+        client = Mistral(api_key=api_key)
         
-        if not self.api_key:
-            raise ValueError("Mistral API key is required. Set MISTRAL_API_KEY in your .env file.")
+        # Read the PDF file and upload to S3
+        with open(pdf_path, "rb") as f:
+            file_content = f.read()
+            document_id = os.path.basename(pdf_path).split('_')[0]  # Extract document_id from filename
+            original_filename = os.path.basename(pdf_path)
+            
+            # Upload to S3 and get URL
+            pdf_url = upload_pdf_to_s3(file_content, original_filename, document_id)
+            logger.info(f"PDF uploaded to S3: {pdf_url}")
+            
+        # Process the file with Mistral OCR using the S3 URL
+        ocr_response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={
+                "type": "document_url",
+                "document_url": pdf_url
+            }
+        )
+            
+        # Combine all pages into raw text
+        raw_text_parts = []
+        for page in ocr_response.pages:
+            # Create raw text by removing markdown formatting from the markdown text
+            raw_text = page.markdown.replace('#', '').replace('*', '').replace('_', '')
+            raw_text_parts.append(raw_text)
         
-        # Initialize Mistral client
-        self.client = Mistral(api_key=self.api_key)
+        raw_text = "\n\n".join(raw_text_parts)
         
-        # Set OCR model
-        self.model = "mistral-ocr-latest"
-        print("Mistral OCR extractor initialized successfully")
+        logger.info(f"Successfully extracted {len(raw_text)} characters with Mistral OCR")
+        
+        return raw_text
+            
+    except Exception as e:
+        logger.error(f"Error processing with Mistral OCR: {str(e)}")
+        raise Exception(f"Failed to process PDF with Mistral OCR: {str(e)}")
+
+def process_uploaded_pdf_with_mistral(file_content: bytes, filename: str = "uploaded_file.pdf") -> str:
+    """
+    Process an uploaded PDF file with Mistral OCR using S3 URL
     
-    def extract_text(self, file_content: bytes, original_filename: str, document_id: str, s3_url: str = None) -> Tuple[str, str]:
-        """
-        Extract text from a document using Mistral OCR API
+    Args:
+        file_content: Binary content of the uploaded PDF file
+        filename: Name of the file (for reference purposes)
         
-        Args:
-            file_content: The binary content of the file
-            original_filename: Original filename
-            document_id: Document ID for S3 path
-            s3_url: Optional S3 URL of the already uploaded file
+    Returns:
+        Extracted text content
+    """
+    try:
+        # Get API key from environment
+        api_key = os.getenv("MISTRAL_API_KEY")
+        if not api_key:
+            raise ValueError("MISTRAL_API_KEY environment variable is not set")
             
-        Returns:
-            Tuple of (raw_text, markdown_content)
-        """
-        print(f"Extracting text using Mistral OCR API for {original_filename}...")
+        # Create client
+        client = Mistral(api_key=api_key)
         
-        try:
-            # Use provided S3 URL if available
-            if s3_url:
-                print(f"Using existing S3 URL: {s3_url}")
-            else:
-                # First upload the PDF to S3 to get a URL
-                s3_url = upload_pdf_to_s3(file_content, original_filename, document_id)
-                print(f"PDF uploaded to S3: {s3_url}")
+        # Generate a document ID (use current timestamp as part of the ID)
+        import uuid
+        document_id = str(uuid.uuid4())
+        
+        # Upload PDF to S3
+        logger.info(f"Uploading PDF to S3: {filename}")
+        pdf_url = upload_pdf_to_s3(file_content, filename, document_id)
+        logger.info(f"PDF uploaded to S3: {pdf_url}")
+        
+        # Process with Mistral OCR using the S3 URL
+        logger.info(f"Processing PDF with Mistral OCR...")
+        ocr_response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={
+                "type": "document_url",
+                "document_url": pdf_url
+            }
+        )
+        
+        # Combine all pages into raw text
+        raw_text_parts = []
+        for page in ocr_response.pages:
+            # Create raw text by removing markdown formatting
+            raw_text = page.markdown.replace('#', '').replace('*', '').replace('_', '')
+            raw_text_parts.append(raw_text)
+        
+        raw_text = "\n\n".join(raw_text_parts)
+        
+        # Save the extracted text as markdown in S3
+        year = "misc"  # Default folder if we don't have a specific year
+        md_filename = f"{document_id}.md"
+        markdown_content = raw_text
+        
+        # Upload markdown content to S3
+        from s3_utils import upload_markdown_to_s3
+        upload_markdown_to_s3(markdown_content, year, md_filename)
+        
+        logger.info(f"Successfully extracted {len(raw_text)} characters with Mistral OCR")
+        
+        return raw_text
             
-            # Use the S3 URL with Mistral OCR
-            ocr_response = self.client.ocr.process(
-                model=self.model,
-                document={
-                    "type": "document_url",
-                    "document_url": s3_url
-                }
-            )
-            
-            # Combine all pages into one markdown document
-            all_pages_markdown = []
-            raw_text_parts = []
-            
-            for page in ocr_response.pages:
-                all_pages_markdown.append(page.markdown)
-                # Create raw text by removing markdown formatting from the markdown text
-                raw_text = page.markdown.replace('#', '').replace('*', '').replace('_', '')
-                raw_text_parts.append(raw_text)
-            
-            markdown_content = "\n\n".join(all_pages_markdown)
-            raw_text = "\n\n".join(raw_text_parts)
-            
-            print(f"Successfully extracted {len(markdown_content)} characters with Mistral OCR")
-            
-            # Get the year from document_id (assuming format like "2023_Q1")
-            year = document_id.split('_')[0]
-            
-            try:
-                # Use upload_markdown_to_s3 with the correct path structure
-                markdown_filename = f"{document_id}.md"
-                markdown_url = upload_markdown_to_s3(markdown_content, year, markdown_filename)
-                print(f"Markdown content uploaded to S3: {markdown_url}")
-            except Exception as e:
-                print(f"Warning: Failed to upload markdown to S3: {e}")
-            
-            return raw_text, markdown_content
-            
-        except Exception as e:
-            print(f"Error processing with Mistral OCR: {str(e)}")
-            raise Exception(f"Failed to process PDF with Mistral OCR: {str(e)}") 
+    except Exception as e:
+        logger.error(f"Error processing with Mistral OCR: {str(e)}")
+        raise Exception(f"Failed to process PDF with Mistral OCR: {str(e)}")

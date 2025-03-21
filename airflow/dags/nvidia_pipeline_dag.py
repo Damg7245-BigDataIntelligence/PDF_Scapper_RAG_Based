@@ -1,19 +1,18 @@
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.dummy import DummyOperator
+
+# Import your pipeline modules - this assumes you have your app code accessible in PYTHONPATH
+# You may need to add your app directory to the PYTHONPATH in the Dockerfile
 import sys
+sys.path.append('/opt/airflow')
+sys.path.append('/opt/airflow/app')
 
-# Add the path to your backend directory
-sys.path.append('/opt/airflow/app/backend')
-
-# Import functions from nvidia_pipeline
-from nvidia_pipeline import (
-    scrape_annual_reports,
-    extract_text_from_pdfs,
-    process_and_chunk_text,
-    create_embeddings,
-    upload_to_vector_db
+# Import your pipeline functions
+from app.backend.nvidia_pipeline import (
+    fetch_pdf_s3_upload,
+    convert_markdown_s3_upload,
+    process_chunks_and_embeddings,
 )
 
 # Default arguments for the DAG
@@ -28,75 +27,38 @@ default_args = {
 
 # Create the DAG
 dag = DAG(
-    'nvidia_financial_pipeline',
+    'nvidia_financial_reports_pipeline',
     default_args=default_args,
-    description='Process NVIDIA financial reports',
-    schedule_interval=timedelta(days=7),  # Weekly
+    description='Process NVIDIA financial reports and create embeddings',
+    schedule_interval=timedelta(days=1),  # Run daily
     start_date=datetime(2023, 1, 1),
     catchup=False,
-    tags=['nvidia', 'financial', 'pdf', 'embeddings'],
+    tags=['nvidia', 'rag', 'embeddings'],
 )
 
-# Define tasks
-start = DummyOperator(
-    task_id='start_pipeline',
+# Define the tasks
+fetch_pdfs_task = PythonOperator(
+    task_id='fetch_pdfs',
+    python_callable=fetch_pdf_s3_upload,
     dag=dag,
 )
 
-scrape_reports_task = PythonOperator(
-    task_id='scrape_annual_reports',
-    python_callable=scrape_annual_reports,
+convert_to_markdown_task = PythonOperator(
+    task_id='convert_to_markdown',
+    python_callable=convert_markdown_s3_upload,
+    op_kwargs={'reports': "{{ task_instance.xcom_pull(task_ids='fetch_pdfs') }}"},
+    dag=dag,
+)
+
+process_embeddings_task = PythonOperator(
+    task_id='process_embeddings',
+    python_callable=process_chunks_and_embeddings,
     op_kwargs={
-        'url': 'https://investor.nvidia.com/financial-info/annual-reports-and-proxy/default.aspx',
-        'download_dir': '/opt/airflow/app/backend/data/raw_pdfs'
+        'processed_reports': "{{ task_instance.xcom_pull(task_ids='convert_to_markdown') }}",
+        'chunking_strategy': 'markdown',
     },
     dag=dag,
 )
 
-extract_text_task = PythonOperator(
-    task_id='extract_text_from_pdfs',
-    python_callable=extract_text_from_pdfs,
-    op_kwargs={
-        'pdf_dir': '/opt/airflow/app/backend/data/raw_pdfs',
-        'output_dir': '/opt/airflow/app/backend/data/extracted_text'
-    },
-    dag=dag,
-)
-
-chunk_text_task = PythonOperator(
-    task_id='process_and_chunk_text',
-    python_callable=process_and_chunk_text,
-    op_kwargs={
-        'text_dir': '/opt/airflow/app/backend/data/extracted_text',
-        'output_dir': '/opt/airflow/app/backend/data/chunks'
-    },
-    dag=dag,
-)
-
-create_embeddings_task = PythonOperator(
-    task_id='create_embeddings',
-    python_callable=create_embeddings,
-    op_kwargs={
-        'chunks_dir': '/opt/airflow/app/backend/data/chunks',
-        'embeddings_file': '/opt/airflow/app/backend/data/embeddings/nvidia_embeddings.json'
-    },
-    dag=dag,
-)
-
-upload_to_db_task = PythonOperator(
-    task_id='upload_to_vector_db',
-    python_callable=upload_to_vector_db,
-    op_kwargs={
-        'embeddings_file': '/opt/airflow/app/backend/data/embeddings/nvidia_embeddings.json',
-        'collection_name': 'nvidia_financials'
-    },
-    dag=dag,
-)
-
-end = DummyOperator(
-    task_id='end_pipeline',
-    dag=dag,
-)
-
-# Define dependencies
-start >> scrape_reports_task >> extract_text_task >> chunk_text_task >> create_embeddings_task >> upload_to_db_task >> end
+# Set task dependencies
+fetch_pdfs_task >> convert_to_markdown_task >> process_embeddings_task
