@@ -116,6 +116,7 @@ services:
           echo "At least 10GB recommended. You have $${disk_available}MB"
           echo
         fi
+        mkdir -p /opt/airflow/data/embeddings /opt/airflow/data/chroma_db /opt/airflow/data/pdfs
         mkdir -p /sources/logs /sources/dags /sources/plugins
         chown -R "${AIRFLOW_UID:-50000}:0" /sources/{logs,dags,plugins}
         exec airflow db init
@@ -130,33 +131,14 @@ services:
     volumes:
       - ./:/sources
 
-  # Your API service
-  backend-api:
-    build:
-      context: ..
-      dockerfile: app/backend/Dockerfile
-    ports:
-      - "8000:8000"  # Map to a different port on host
+  # Named volumes for data persistence to be shared with the app pipeline
+  # This allows Airflow to read/write to the same data that the backend uses
+  data-volume:
+    image: busybox
     volumes:
-      - ./data:/app/data  # Share the same data directory with Airflow
-    environment:
-      - PINECONE_API_KEY=${PINECONE_API_KEY:-your_pinecone_api_key}
-      - PINECONE_ENV=${PINECONE_ENV:-your_pinecone_env}
-    depends_on:
-      - chroma-db
-
-  # ChromaDB service
-  chroma-db:
-    image: ghcr.io/chroma-core/chroma:latest
-    volumes:
-      - chroma-data:/chroma/chroma
-    ports:
-      - "8001:8000"  # Map ChromaDB port to avoid conflict with API
-    environment:
-      - ALLOW_RESET=true
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_PORT=8000
-
+      - shared-data:/data
+    command: ["sh", "-c", "mkdir -p /data/embeddings /data/chroma_db /data/pdfs && chmod -R 777 /data && tail -f /dev/null"]
+    
 volumes:
   postgres-db-volume:
-  chroma-data:
+  shared-data:  # This volume will be shared between pipelines

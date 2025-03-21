@@ -690,7 +690,7 @@ with tab2:
                     st.session_state.context_chunks = response.get("context_chunks", [])
                     st.session_state.processing_time = response.get("processing_time", 0)
                     st.session_state.token_info = response.get("token_info", None)
-            else:
+        else:
                 st.warning("Please enter a question.")
         
         # Display answer and sources
