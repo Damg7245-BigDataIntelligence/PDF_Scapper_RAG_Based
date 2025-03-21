@@ -4,6 +4,7 @@ from typing import Dict, Tuple, Any, Optional
 from datetime import datetime
 from mistralai import Mistral
 from dotenv import load_dotenv
+from app.backend.s3_utils import upload_pdf_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
 
 # Load environment variables
 load_dotenv()
@@ -42,8 +43,6 @@ class MistralOCRExtractor:
         
         try:
             # First upload the PDF to S3 to get a URL
-            from s3_utils import upload_pdf_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
-            
             # Upload the PDF to S3 and get the URL
             s3_url = upload_pdf_to_s3(file_content, original_filename, document_id)
             print(f"PDF uploaded to S3: {s3_url}")

@@ -6,16 +6,16 @@ import json
 from dotenv import load_dotenv
 from pathlib import Path
 
-from .models import (
+from app.backend.models import (
     Document, DocumentResponse, DocumentListResponse, 
     DocumentContentResponse, SummarizeRequest, SummarizeResponse,
     QuestionRequest, QuestionResponse, ModelsResponse,
     SearchRequest, SearchResponse, QuestionRAGRequest
 )
-from .pdf_processor import PDFProcessor
-from .llm_service import LLMService
-from .utils import DocumentStore
-from .embedding_service import EmbeddingService
+from app.backend.pdf_processor import PDFProcessor
+from app.backend.llm_service import LLMService
+from app.backend.utils import DocumentStore
+from app.backend.embedding_service import EmbeddingService
 # Load environment variables
 load_dotenv()
 

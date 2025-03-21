@@ -1,7 +1,7 @@
 import os
 import chromadb
 from google.generativeai import GenerativeModel, configure
-from fixed_size_chunker import FixedSizeChunker
+from app.backend.fixed_size_chunker import FixedSizeChunker
 
 class ChromaDBResponder:
     def __init__(self, collection_name="my_collection", chunk_size=100):

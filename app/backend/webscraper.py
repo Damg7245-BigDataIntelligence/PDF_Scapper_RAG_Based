@@ -6,7 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 import requests
-from s3_utils import upload_file_to_s3
+from app.backend.s3_utils import upload_file_to_s3
 
 def fetch_nvidia_financial_reports():
     url = "https://investor.nvidia.com/financial-info/quarterly-results/default.aspx"
@@ -69,7 +69,7 @@ def fetch_nvidia_financial_reports():
 
                                     response = requests.get(pdf_url, stream=True)
                                     pdf_filename = f"{year}_{ '_'.join(quarter_heading.split()[:2])}.pdf"
-                                    # status = upload_file_to_s3(response.content, pdf_filename, str(year))
+                                    status = upload_file_to_s3(response.content, pdf_filename, str(year))
                                     reports.append({
                                         "pdf_filename": pdf_filename,
                                         "content": response.content

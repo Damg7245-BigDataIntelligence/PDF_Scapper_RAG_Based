@@ -5,8 +5,8 @@ from typing import Dict, Tuple, Any
 from datetime import datetime
 import tempfile
 from tempfile import NamedTemporaryFile
-from .s3_utils import upload_pdf_to_s3, upload_markdown_to_s3, upload_file_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
-from .embedding_service import EmbeddingService
+from app.backend.s3_utils import upload_pdf_to_s3, upload_markdown_to_s3, upload_file_to_s3, AWS_S3_BUCKET_NAME, AWS_REGION
+from app.backend.embedding_service import EmbeddingService
 
 # Docling imports
 from docling.document_converter import DocumentConverter
@@ -16,7 +16,7 @@ from docling.document_converter import PdfFormatOption
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 # Add import for the Mistral extractor
-from .mistral_ocr_extractor import MistralOCRExtractor
+from app.backend.mistral_ocr_extractor import MistralOCRExtractor
 
 class PDFProcessor:
     def __init__(self, use_mistral: bool = False):

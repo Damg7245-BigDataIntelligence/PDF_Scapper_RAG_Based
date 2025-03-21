@@ -2,8 +2,8 @@ import os
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from .models import Document, DocumentResponse
-from .s3_utils import list_documents_from_s3, get_document_metadata, get_markdown_from_s3
+from app.backend.models import Document, DocumentResponse
+from app.backend.s3_utils import list_documents_from_s3, get_document_metadata, get_markdown_from_s3
 
 class DocumentStore:
     def __init__(self):

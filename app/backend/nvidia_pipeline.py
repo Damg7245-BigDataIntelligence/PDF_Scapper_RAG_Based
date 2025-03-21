@@ -1,5 +1,5 @@
-from webscraper import fetch_nvidia_financial_reports
-from mistral_ocr_extractor import MistralOCRExtractor
+from app.backend.webscraper import fetch_nvidia_financial_reports
+from app.backend.mistral_ocr_extractor import MistralOCRExtractor
 
 def fetch_pdf_s3_upload():
     # Step 1: Fetch NVIDIA financial reports

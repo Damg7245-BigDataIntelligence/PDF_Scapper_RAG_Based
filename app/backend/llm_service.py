@@ -4,7 +4,8 @@ import litellm
 import requests
 import time
 import tiktoken
-from .embedding_service import EmbeddingService
+from app.backend.embedding_service import EmbeddingService
+
 class LLMService:
     def __init__(self, api_key: Optional[str] = None):
         # HuggingFace API token (can be empty for some public models)

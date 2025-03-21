@@ -177,3 +177,4 @@ cython_debug/
 # personal
 sample.pdf 
 test_mistral.py 
+myenv
