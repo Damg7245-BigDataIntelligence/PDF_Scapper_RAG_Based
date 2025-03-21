@@ -70,6 +70,23 @@ services:
     command:
       - -c
       - |
+        function ver() {
+          printf "%04d%04d%04d%04d" $${1//./ }
+        }
+        # Install airflow if not already installed
+        pip install -q apache-airflow>=2.2.0
+        # Now check the version
+        airflow_version=$$(airflow version | head -n 1 | awk '{print $$2}')
+        airflow_version_comparable=$$(ver $${airflow_version})
+        min_airflow_version=2.2.0
+        min_airflow_version_comparable=$$(ver $${min_airflow_version})
+        if (( airflow_version_comparable < min_airflow_version_comparable )); then
+          echo
+          echo -e "\033[1;31mERROR!!!: Too old Airflow version $${airflow_version}!\033[0m"
+          echo "The minimum Airflow version supported: $${min_airflow_version}. Only use this or higher!"
+          echo
+          exit 1
+        fi
         mkdir -p /sources/logs /sources/dags /sources/plugins /sources/data
         chown -R "50000:0" /sources/{logs,dags,plugins,data}
         airflow db init
